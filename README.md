@@ -1,106 +1,106 @@
 # KTalk MCP Server
 
-MCP-сервер для работы с записями и транскрипциями [KTalk](https://ktalk.ru) — системой для проведения встреч.
+MCP server for working with [KTalk](https://ktalk.ru) meeting recordings and transcripts.
 
-## Возможности
+## Tools
 
-| Инструмент | Описание |
+| Tool | Description |
 |---|---|
-| `get_recording_info` | Получить информацию о записи (название, участники, доступные качества) |
-| `get_transcript` | Получить транскрипцию записи (с таймкодами и именами спикеров) |
-| `download_recording` | Скачать файл записи встречи |
+| `get_recording_info` | Get recording metadata (title, participants, available qualities) |
+| `get_transcript` | Download transcript as a `.txt` file with timestamps and speaker names |
+| `download_recording` | Download meeting recording video file |
 
-## Установка
+## Installation
 
 ```bash
-# Создать виртуальное окружение
+# Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Установить зависимости
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-## Конфигурация
+## Configuration
 
-Сервер настраивается через переменные окружения:
+The server is configured via environment variables:
 
-| Переменная | Обязательная | Описание |
+| Variable | Required | Description |
 |---|---|---|
-| `KTALK_API_TOKEN` | Да | API-ключ для авторизации (передаётся как `X-Api-Key`) |
-| `KTALK_BASE_URL` | Нет | Базовый URL KTalk (по умолчанию `https://ktstech.ktalk.ru`) |
-| `KTALK_DOWNLOAD_DIR` | Нет | Папка для скачанных записей (по умолчанию `./downloads`) |
+| `KTALK_API_TOKEN` | Yes | API key for authorization (sent as `X-Api-Key` header) |
+| `KTALK_BASE_URL` | No | KTalk base URL (default: `https://ktstech.ktalk.ru`) |
+| `KTALK_DOWNLOAD_DIR` | No | Directory for downloaded files (default: `./downloads`) |
 
-### Как получить API-ключ
+### How to get an API key
 
-API-ключ выдаётся администратором домена KTalk.
+The API key is issued by the KTalk domain administrator.
 
-## Запуск
+## Running
 
-### Автономный запуск (для отладки)
+### Standalone (for debugging)
 
 ```bash
-export KTALK_SESSION_TOKEN="ваш-токен"
+export KTALK_API_TOKEN="your-api-key"
 python server.py
 ```
 
-### Подключение к Cursor
+### Cursor integration
 
-Добавьте в файл `.cursor/mcp.json` (в корне проекта или в домашней директории):
+Add to `.cursor/mcp.json` (in project root or home directory):
 
 ```json
 {
   "mcpServers": {
     "ktalk": {
-      "command": "/полный/путь/к/ktalk-mcp/.venv/bin/python",
-      "args": ["/полный/путь/к/ktalk-mcp/server.py"],
+      "command": "/full/path/to/ktalk-mcp/.venv/bin/python",
+      "args": ["/full/path/to/ktalk-mcp/server.py"],
       "env": {
-        "KTALK_API_TOKEN": "ваш-api-ключ",
+        "KTALK_API_TOKEN": "your-api-key",
         "KTALK_BASE_URL": "https://ktstech.ktalk.ru",
-        "KTALK_DOWNLOAD_DIR": "/полный/путь/к/папке/downloads"
+        "KTALK_DOWNLOAD_DIR": "/full/path/to/downloads"
       }
     }
   }
 }
 ```
 
-### Подключение к Claude Desktop
+### Claude Desktop integration
 
-Добавьте в `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "ktalk": {
-      "command": "/полный/путь/к/ktalk-mcp/.venv/bin/python",
-      "args": ["/полный/путь/к/ktalk-mcp/server.py"],
+      "command": "/full/path/to/ktalk-mcp/.venv/bin/python",
+      "args": ["/full/path/to/ktalk-mcp/server.py"],
       "env": {
-        "KTALK_API_TOKEN": "ваш-api-ключ"
+        "KTALK_API_TOKEN": "your-api-key"
       }
     }
   }
 }
 ```
 
-## Использование
+## Usage
 
-После подключения сервера к Cursor или Claude Desktop, инструменты будут доступны в чате:
+After connecting the server to Cursor or Claude Desktop, the tools are available in chat:
 
-**Получить транскрипцию:**
-> Получи транскрипцию записи Y3ljMA8KGS72A68L0jp0
+**Get transcript:**
+> Get the transcript for recording Y3ljMA8KGS72A68L0jp0
 
-**Скачать запись:**
-> Скачай запись Y3ljMA8KGS72A68L0jp0 в качестве original
+**Download recording:**
+> Download recording Y3ljMA8KGS72A68L0jp0 in 900p quality
 
-**С указанием другого домена:**
-> Получи транскрипцию записи r9R9Un2Q3nWNtJ4t6124 с базового URL https://stranadev.ktalk.ru
+**Get recording info:**
+> Show info for recording Y3ljMA8KGS72A68L0jp0
 
-## API-эндпоинты
+## API endpoints
 
-Сервер использует следующие эндпоинты KTalk Public API:
+The server uses the following KTalk Public API endpoints:
 
-- `GET /api/Recordings/{recordingKey}` — информация о записи
-- `GET /api/recordings/{recordingKey}/transcript` — транскрипция записи
-- `GET /api/Recordings/{recordingKey}/file/{qualityName}` — файл записи
+- `GET /api/Recordings/{recordingKey}` — recording metadata
+- `GET /api/recordings/{recordingKey}/transcript` — recording transcript
+- `GET /api/Recordings/{recordingKey}/file/{qualityName}` — recording file
 
-Авторизация: заголовок `X-Api-Key`.
+Authorization: `X-Api-Key` header.
