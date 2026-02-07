@@ -28,7 +28,7 @@ The server is configured via environment variables:
 | Variable | Required | Description |
 |---|---|---|
 | `KTALK_API_TOKEN` | Yes | API key for authorization (sent as `X-Api-Key` header) |
-| `KTALK_BASE_URL` | No | KTalk base URL (default: `https://ktstech.ktalk.ru`) |
+| `KTALK_BASE_URL` | No | KTalk base URL |
 | `KTALK_DOWNLOAD_DIR` | No | Directory for downloaded files (default: `./downloads`) |
 
 ### How to get an API key
@@ -56,7 +56,7 @@ Add to `.cursor/mcp.json` (in project root or home directory):
       "args": ["/full/path/to/ktalk-mcp/server.py"],
       "env": {
         "KTALK_API_TOKEN": "your-api-key",
-        "KTALK_BASE_URL": "https://ktstech.ktalk.ru",
+        "KTALK_BASE_URL": "https://{base_url}.ktalk.ru",
         "KTALK_DOWNLOAD_DIR": "/full/path/to/downloads"
       }
     }
