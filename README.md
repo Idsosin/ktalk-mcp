@@ -6,6 +6,7 @@ MCP-сервер для работы с записями и транскрипц
 
 | Инструмент | Описание |
 |---|---|
+| `get_recording_info` | Получить информацию о записи (название, участники, доступные качества) |
 | `get_transcript` | Получить транскрипцию записи (с таймкодами и именами спикеров) |
 | `download_recording` | Скачать файл записи встречи |
 
@@ -26,19 +27,13 @@ pip install -r requirements.txt
 
 | Переменная | Обязательная | Описание |
 |---|---|---|
-| `KTALK_API_TOKEN` | Да* | API-токен для авторизации (Bearer) |
-| `KTALK_SESSION_TOKEN` | Да* | Токен сессии (альтернатива API-токену) |
+| `KTALK_API_TOKEN` | Да | API-ключ для авторизации (передаётся как `X-Api-Key`) |
 | `KTALK_BASE_URL` | Нет | Базовый URL KTalk (по умолчанию `https://ktstech.ktalk.ru`) |
 | `KTALK_DOWNLOAD_DIR` | Нет | Папка для скачанных записей (по умолчанию `./downloads`) |
 
-\* Необходимо задать хотя бы один из токенов: `KTALK_API_TOKEN` или `KTALK_SESSION_TOKEN`.
+### Как получить API-ключ
 
-### Как получить Session Token
-
-1. Откройте KTalk в браузере (например `https://ktstech.ktalk.ru`)
-2. Войдите в систему
-3. Откройте DevTools (F12) → Application → Cookies
-4. Скопируйте значение cookie `sessionToken`
+API-ключ выдаётся администратором домена KTalk.
 
 ## Запуск
 
@@ -57,28 +52,12 @@ python server.py
 {
   "mcpServers": {
     "ktalk": {
-      "command": "python",
-      "args": ["/полный/путь/к/ktalk-mcp/server.py"],
-      "env": {
-        "KTALK_SESSION_TOKEN": "ваш-токен",
-        "KTALK_BASE_URL": "https://ktstech.ktalk.ru",
-        "KTALK_DOWNLOAD_DIR": "/полный/путь/к/папке/downloads"
-      }
-    }
-  }
-}
-```
-
-Или с использованием виртуального окружения:
-
-```json
-{
-  "mcpServers": {
-    "ktalk": {
       "command": "/полный/путь/к/ktalk-mcp/.venv/bin/python",
       "args": ["/полный/путь/к/ktalk-mcp/server.py"],
       "env": {
-        "KTALK_SESSION_TOKEN": "ваш-токен"
+        "KTALK_API_TOKEN": "ваш-api-ключ",
+        "KTALK_BASE_URL": "https://ktstech.ktalk.ru",
+        "KTALK_DOWNLOAD_DIR": "/полный/путь/к/папке/downloads"
       }
     }
   }
@@ -93,10 +72,10 @@ python server.py
 {
   "mcpServers": {
     "ktalk": {
-      "command": "python",
+      "command": "/полный/путь/к/ktalk-mcp/.venv/bin/python",
       "args": ["/полный/путь/к/ktalk-mcp/server.py"],
       "env": {
-        "KTALK_SESSION_TOKEN": "ваш-токен"
+        "KTALK_API_TOKEN": "ваш-api-ключ"
       }
     }
   }
@@ -120,5 +99,8 @@ python server.py
 
 Сервер использует следующие эндпоинты KTalk Public API:
 
+- `GET /api/Recordings/{recordingKey}` — информация о записи
 - `GET /api/recordings/{recordingKey}/transcript` — транскрипция записи
 - `GET /api/Recordings/{recordingKey}/file/{qualityName}` — файл записи
+
+Авторизация: заголовок `X-Api-Key`.

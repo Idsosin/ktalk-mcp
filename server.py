@@ -3,14 +3,14 @@
 KTalk MCP Server
 
 MCP-сервер для работы с записями и транскрипциями KTalk.
-Предоставляет два инструмента:
+Предоставляет инструменты:
   1. get_transcript — получить транскрипцию записи
   2. download_recording — скачать файл записи
+  3. get_recording_info — получить информацию о записи (участники, качества, длительность)
 
 Конфигурация через переменные окружения:
   KTALK_BASE_URL    — базовый URL (например https://ktstech.ktalk.ru)
-  KTALK_API_TOKEN   — API-токен для авторизации (Authorization: Bearer)
-  KTALK_SESSION_TOKEN — токен сессии (Cookie: sessionToken=...), альтернатива API-токену
+  KTALK_API_TOKEN   — API-ключ для авторизации (передаётся в заголовке X-Api-Key)
   KTALK_DOWNLOAD_DIR — папка для сохранения скачанных записей (по умолчанию ./downloads)
 """
 
@@ -49,40 +49,33 @@ def _get_download_dir() -> Path:
     return Path(os.environ.get("KTALK_DOWNLOAD_DIR", DEFAULT_DOWNLOAD_DIR))
 
 
+def _get_api_token() -> str:
+    """Получить API-ключ из переменной окружения."""
+    token = os.environ.get("KTALK_API_TOKEN", "")
+    if not token:
+        raise ValueError(
+            "Переменная окружения KTALK_API_TOKEN не задана. "
+            "Укажите API-ключ для авторизации в KTalk."
+        )
+    return token
+
+
 def _build_headers() -> dict[str, str]:
     """Собрать заголовки для HTTP-запросов к KTalk API."""
-    headers: dict[str, str] = {
+    return {
         "Accept": "application/json",
         "User-Agent": "ktalk-mcp/1.0",
+        "X-Api-Key": _get_api_token(),
     }
-
-    api_token = os.environ.get("KTALK_API_TOKEN")
-    session_token = os.environ.get("KTALK_SESSION_TOKEN")
-
-    if api_token:
-        headers["Authorization"] = f"Bearer {api_token}"
-    elif session_token:
-        headers["Cookie"] = f"sessionToken={session_token}"
-
-    return headers
 
 
 def _build_download_headers() -> dict[str, str]:
     """Собрать заголовки для скачивания файлов."""
-    headers: dict[str, str] = {
+    return {
         "Accept": "*/*",
         "User-Agent": "ktalk-mcp/1.0",
+        "X-Api-Key": _get_api_token(),
     }
-
-    api_token = os.environ.get("KTALK_API_TOKEN")
-    session_token = os.environ.get("KTALK_SESSION_TOKEN")
-
-    if api_token:
-        headers["Authorization"] = f"Bearer {api_token}"
-    elif session_token:
-        headers["Cookie"] = f"sessionToken={session_token}"
-
-    return headers
 
 
 def _format_timestamp(ms: int) -> str:
@@ -96,20 +89,24 @@ def _format_timestamp(ms: int) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
-def _format_transcript(data: Any) -> str:
-    """
-    Отформатировать JSON-ответ транскрипции в читаемый текст.
+def _format_duration(seconds: int) -> str:
+    """Форматировать секунды в читаемую длительность."""
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+    if hours > 0:
+        return f"{hours}ч {minutes}мин {secs}с"
+    if minutes > 0:
+        return f"{minutes}мин {secs}с"
+    return f"{secs}с"
 
-    Поддерживаемые форматы ответа API:
-      - Публичный API: GET /api/recordings/{recordingKey}/transcript
-      - Внутренний API: GET /api/recordings/v2/{recordingKey}/summary
-    """
+
+def _format_transcript(data: Any) -> str:
+    """Отформатировать JSON-ответ транскрипции в читаемый текст."""
     if not data:
         return "Транскрипция пуста."
 
-    # ------------------------------------------------------------------
-    # Формат 1: Публичный API — список фраз (phrases / segments)
-    # ------------------------------------------------------------------
+    # Формат 1: Список фраз
     if isinstance(data, list):
         lines = []
         for item in data:
@@ -120,14 +117,11 @@ def _format_transcript(data: Any) -> str:
             lines.append(f"[{ts}] {speaker}: {text}")
         return "\n".join(lines) if lines else "Транскрипция пуста."
 
-    # ------------------------------------------------------------------
-    # Формат 2: Объект с полем transcription / transcriptionV2
-    # ------------------------------------------------------------------
+    # Формат 2: Объект с полем transcription / transcriptionV2 / tracks
     transcription = data.get("transcriptionV2") or data.get("transcription") or data
 
-    # Если транскрипция обёрнута в status
     status = transcription.get("status") if isinstance(transcription, dict) else None
-    if status and status != "success":
+    if status and status not in ("success", "complete"):
         return f"Транскрипция недоступна (статус: {status})."
 
     tracks = transcription.get("tracks", []) if isinstance(transcription, dict) else []
@@ -146,15 +140,11 @@ def _format_transcript(data: Any) -> str:
             ts = _format_timestamp(start_ms)
             lines.append(f"[{ts}] {speaker_name}: {text}")
 
-    # ------------------------------------------------------------------
-    # Формат 3: Плоский текст (поле "text" на верхнем уровне)
-    # ------------------------------------------------------------------
+    # Формат 3: Плоский текст
     if not lines and isinstance(data, dict) and "text" in data:
         return data["text"]
 
-    # ------------------------------------------------------------------
     # Формат 4: Поле phrases
-    # ------------------------------------------------------------------
     if not lines and isinstance(data, dict):
         phrases = data.get("phrases", [])
         for phrase in phrases:
@@ -165,6 +155,23 @@ def _format_transcript(data: Any) -> str:
             lines.append(f"[{ts}] {speaker}: {text}")
 
     return "\n".join(lines) if lines else "Не удалось извлечь текст транскрипции."
+
+
+def _handle_error(response: httpx.Response, context: str) -> str | None:
+    """Обработать HTTP-ошибки. Возвращает сообщение об ошибке или None."""
+    if response.status_code == 401:
+        return (
+            "Ошибка 401: Не авторизован. "
+            "Убедитесь, что переменная окружения KTALK_API_TOKEN содержит корректный API-ключ."
+        )
+    if response.status_code == 403:
+        return (
+            "Ошибка 403: Доступ запрещён. "
+            "Проверьте API-ключ и права доступа к записи."
+        )
+    if response.status_code == 404:
+        return f"Ошибка 404: {context}"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -195,28 +202,17 @@ async def get_transcript(
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
         response = await client.get(url, headers=headers)
 
-        if response.status_code == 401:
-            return (
-                "Ошибка 401: Не авторизован. "
-                "Убедитесь, что задана переменная окружения KTALK_API_TOKEN или KTALK_SESSION_TOKEN."
-            )
-        if response.status_code == 403:
-            return (
-                "Ошибка 403: Доступ запрещён. "
-                "Проверьте токен и права доступа к записи."
-            )
-        if response.status_code == 404:
-            return f"Ошибка 404: Запись с ключом '{recording_key}' не найдена."
+        error = _handle_error(response, f"Запись с ключом '{recording_key}' не найдена.")
+        if error:
+            return error
 
         response.raise_for_status()
 
         content_type = response.headers.get("content-type", "")
-
         if "application/json" in content_type:
             data = response.json()
             return _format_transcript(data)
         else:
-            # Если API вернул plain text
             return response.text
 
 
@@ -227,18 +223,20 @@ async def get_transcript(
 @mcp.tool()
 async def download_recording(
     recording_key: str,
-    quality_name: str = "original",
+    quality_name: str = "240p",
     base_url: str | None = None,
     output_dir: str | None = None,
 ) -> str:
     """Скачать файл записи встречи KTalk.
 
     Вызывает GET /api/Recordings/{recordingKey}/file/{qualityName} и сохраняет
-    файл на диск.
+    файл на диск. Перед скачиванием рекомендуется вызвать get_recording_info,
+    чтобы узнать доступные качества записи.
 
     Args:
         recording_key: Ключ записи (например "Y3ljMA8KGS72A68L0jp0").
-        quality_name: Качество записи. Обычно "original", "low", "medium", "high".
+        quality_name: Качество записи. Типичные значения: "240p", "480p", "720p", "900p", "1080p".
+                      По умолчанию "240p".
         base_url: Базовый URL KTalk (если не указан, берётся из KTALK_BASE_URL).
         output_dir: Папка для сохранения (если не указана, берётся из KTALK_DOWNLOAD_DIR).
 
@@ -254,28 +252,19 @@ async def download_recording(
     async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
         response = await client.get(url, headers=headers)
 
-        if response.status_code == 401:
-            return (
-                "Ошибка 401: Не авторизован. "
-                "Убедитесь, что задана переменная окружения KTALK_API_TOKEN или KTALK_SESSION_TOKEN."
-            )
-        if response.status_code == 403:
-            return (
-                "Ошибка 403: Доступ запрещён. "
-                "Проверьте токен и права доступа к записи."
-            )
-        if response.status_code == 404:
-            return (
-                f"Ошибка 404: Файл записи '{recording_key}' с качеством '{quality_name}' не найден."
-            )
+        error = _handle_error(
+            response,
+            f"Файл записи '{recording_key}' с качеством '{quality_name}' не найден. "
+            f"Используйте get_recording_info, чтобы узнать доступные качества.",
+        )
+        if error:
+            return error
 
         response.raise_for_status()
 
-        # Определяем имя файла
         filename = _extract_filename(response, recording_key, quality_name)
         file_path = download_dir / filename
 
-        # Сохраняем файл
         file_path.write_bytes(response.content)
 
         size_mb = len(response.content) / (1024 * 1024)
@@ -288,6 +277,112 @@ async def download_recording(
         )
 
 
+# ---------------------------------------------------------------------------
+# Инструмент 3: Информация о записи
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def get_recording_info(
+    recording_key: str,
+    base_url: str | None = None,
+) -> str:
+    """Получить информацию о записи KTalk.
+
+    Возвращает название, длительность, участников, доступные качества для скачивания
+    и статус транскрипции.
+
+    Args:
+        recording_key: Ключ записи (например "Y3ljMA8KGS72A68L0jp0").
+        base_url: Базовый URL KTalk (если не указан, берётся из KTALK_BASE_URL).
+
+    Returns:
+        Информация о записи в текстовом формате.
+    """
+    url_base = (base_url or _get_base_url()).rstrip("/")
+    url = f"{url_base}/api/Recordings/{recording_key}"
+    headers = _build_headers()
+
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+        response = await client.get(url, headers=headers)
+
+        error = _handle_error(response, f"Запись с ключом '{recording_key}' не найдена.")
+        if error:
+            return error
+
+        response.raise_for_status()
+        data = response.json()
+
+    title = data.get("title", "Без названия")
+    description = data.get("description") or ""
+    created = data.get("createdDate", "")
+    duration = data.get("duration", 0)
+    status = data.get("status", "unknown")
+    participants_count = data.get("participantsCount", 0)
+
+    # Автор записи
+    created_by = data.get("createdBy", {})
+    author = f"{created_by.get('firstname', '')} {created_by.get('surname', '')}".strip()
+    author_email = created_by.get("email", "")
+
+    # Участники
+    participants = data.get("participants", [])
+    participant_names = []
+    for p in participants:
+        user = p.get("userInfo") or {}
+        name = (
+            p.get("anonymousName")
+            or f"{user.get('firstname', '')} {user.get('surname', '')}".strip()
+            or "Неизвестный"
+        )
+        participant_names.append(name)
+
+    # Доступные качества
+    qualities = data.get("qualities", [])
+    quality_lines = []
+    for q in qualities:
+        q_name = q.get("name", "?")
+        q_status = q.get("status", "unknown")
+        size = q.get("size", {})
+        resolution = f"{size.get('width', '?')}x{size.get('height', '?')}"
+        quality_lines.append(f"  - {q_name} ({resolution}, статус: {q_status})")
+
+    # Транскрипция
+    transcription = data.get("transcription", {})
+    tr_status = transcription.get("status", "нет") if transcription else "нет"
+
+    has_audio = data.get("hasAudioRecord", False)
+
+    # Формируем вывод
+    lines = [
+        f"Запись: {title}",
+        f"Ключ: {recording_key}",
+    ]
+    if description:
+        lines.append(f"Описание: {description}")
+    lines.extend([
+        f"Дата создания: {created}",
+        f"Автор: {author} ({author_email})" if author_email else f"Автор: {author}",
+        f"Длительность: {_format_duration(duration)}",
+        f"Статус: {status}",
+        f"Участников: {participants_count}",
+    ])
+    if participant_names:
+        lines.append(f"Участники: {', '.join(participant_names)}")
+    lines.append(f"Аудиозапись: {'да' if has_audio else 'нет'}")
+    lines.append(f"Транскрипция: {tr_status}")
+    if quality_lines:
+        lines.append("Доступные качества для скачивания:")
+        lines.extend(quality_lines)
+    else:
+        lines.append("Качества для скачивания: нет данных")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Вспомогательные функции
+# ---------------------------------------------------------------------------
+
 def _extract_filename(response: httpx.Response, recording_key: str, quality_name: str) -> str:
     """Извлечь имя файла из заголовка Content-Disposition или сгенерировать."""
     cd = response.headers.get("content-disposition", "")
@@ -296,7 +391,6 @@ def _extract_filename(response: httpx.Response, recording_key: str, quality_name
         if match:
             return match.group(1).strip()
 
-    # Определяем расширение по Content-Type
     content_type = response.headers.get("content-type", "")
     ext_map = {
         "video/mp4": ".mp4",
