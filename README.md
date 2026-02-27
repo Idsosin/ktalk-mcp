@@ -1,11 +1,15 @@
 # KTalk MCP Server
 
-MCP server for working with [KTalk](https://ktalk.ru) meeting recordings and transcripts.
+MCP server for working with [KTalk](https://ktalk.ru) meeting recordings and transcripts via [kts-ktalk-api-proxy](https://github.com/kts-studio/kts-ktalk-api-proxy) with JWT (Keycloak) authentication.
+
+The proxy acts as a single entry point to the KTalk API: clients authenticate with a JWT token (Keycloak), while the KTalk API key is stored securely on the proxy server and never exposed to clients.
 
 ## Tools
 
 | Tool | Description |
 |---|---|
+| `login` | Authenticate via Keycloak (username + password), saves token automatically |
+| `list_recordings` | List recordings with optional filters (room, date range) |
 | `get_recording_info` | Get recording metadata (title, participants, available qualities) |
 | `get_transcript` | Download transcript as a `.txt` file with timestamps and speaker names |
 | `download_recording` | Download meeting recording video file |
@@ -13,36 +17,31 @@ MCP server for working with [KTalk](https://ktalk.ru) meeting recordings and tra
 ## Installation
 
 ```bash
-# Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
 ## Configuration
 
-The server is configured via environment variables:
-
 | Variable | Required | Description |
 |---|---|---|
-| `KTALK_API_TOKEN` | Yes | API key for authorization (sent as `X-Api-Key` header) |
-| `KTALK_BASE_URL` | No | KTalk base URL (default: `https://ktstech.ktalk.ru`) |
+| `KTALK_PROXY_URL` | Yes | Proxy base URL (e.g. `https://your-proxy.example.com`) |
+| `KTALK_JWT_TOKEN` | No | Manual JWT override (if set, skips saved token) |
 | `KTALK_DOWNLOAD_DIR` | No | Directory for downloaded files (default: `./downloads`) |
 
-### How to get an API key
+## Authentication
 
-The API key is issued by the KTalk domain administrator.
+The server uses **Keycloak Direct Access Grant** (Resource Owner Password Credentials):
+
+1. Call the `login` tool with your Keycloak username and password.
+2. The server obtains a JWT access token + refresh token from Keycloak.
+3. Tokens are saved to `~/.ktalk-mcp/token.json` and used automatically.
+4. When the access token expires, it is refreshed transparently using the refresh token.
+
+> If both tokens expire, call `login` again.
 
 ## Running
-
-### Standalone (for debugging)
-
-```bash
-export KTALK_API_TOKEN="your-api-key"
-python server.py
-```
 
 ### Cursor integration
 
@@ -55,9 +54,7 @@ Add to `.cursor/mcp.json` (in project root or home directory):
       "command": "/full/path/to/ktalk-mcp/.venv/bin/python",
       "args": ["/full/path/to/ktalk-mcp/server.py"],
       "env": {
-        "KTALK_API_TOKEN": "your-api-key",
-        "KTALK_BASE_URL": "https://ktstech.ktalk.ru",
-        "KTALK_DOWNLOAD_DIR": "/full/path/to/downloads"
+        "KTALK_PROXY_URL": "https://your-proxy.example.com"
       }
     }
   }
@@ -75,32 +72,41 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "command": "/full/path/to/ktalk-mcp/.venv/bin/python",
       "args": ["/full/path/to/ktalk-mcp/server.py"],
       "env": {
-        "KTALK_API_TOKEN": "your-api-key"
+        "KTALK_PROXY_URL": "https://your-proxy.example.com"
       }
     }
   }
 }
 ```
 
+### Standalone (for debugging)
+
+```bash
+export KTALK_PROXY_URL="https://your-proxy.example.com"
+python server.py
+```
+
 ## Usage
 
-After connecting the server to Cursor or Claude Desktop, the tools are available in chat:
+After connecting the server, start by authenticating:
 
-**Get transcript:**
+> Log in to KTalk with username i.sosin
+
+Then use the available tools:
+
+> Show all recordings for room mcptkdy64ohg
+
 > Get the transcript for recording Y3ljMA8KGS72A68L0jp0
 
-**Download recording:**
 > Download recording Y3ljMA8KGS72A68L0jp0 in 900p quality
 
-**Get recording info:**
-> Show info for recording Y3ljMA8KGS72A68L0jp0
+## API endpoints (via proxy)
 
-## API endpoints
+All requests are routed through the proxy with the `/api/talk` prefix:
 
-The server uses the following KTalk Public API endpoints:
+- `GET /api/talk/api/Domain/recordings/v2` -- list recordings
+- `GET /api/talk/api/Recordings/{recordingKey}` -- recording metadata
+- `GET /api/talk/api/recordings/{recordingKey}/transcript` -- recording transcript
+- `GET /api/talk/api/Recordings/{recordingKey}/file/{qualityName}` -- recording file
 
-- `GET /api/Recordings/{recordingKey}` — recording metadata
-- `GET /api/recordings/{recordingKey}/transcript` — recording transcript
-- `GET /api/Recordings/{recordingKey}/file/{qualityName}` — recording file
-
-Authorization: `X-Api-Key` header.
+Authorization: `Authorization: Bearer <JWT>` header. The proxy validates the JWT via Keycloak JWKS and forwards requests to the KTalk API with the server-side API key.
